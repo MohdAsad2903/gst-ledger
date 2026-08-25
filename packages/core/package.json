@@ -1,0 +1,12 @@
+{
+  "name": "@gst/core",
+  "version": "0.1.0",
+  "description": "Pure GST domain and calculation engine",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {}
+}

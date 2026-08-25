@@ -1,0 +1,15 @@
+{
+  "name": "@gst/app",
+  "version": "0.1.0",
+  "description": "Electron main process, services, and IPC for GST Ledger",
+  "type": "module",
+  "main": "./src/main.ts",
+  "types": "./src/main.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@gst/core": "*",
+    "@gst/data": "*"
+  }
+}
