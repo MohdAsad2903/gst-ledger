@@ -9,6 +9,7 @@
     "packages/*"
   ],
   "scripts": {
+    "start": "electron .",
     "dev": "vite",
     "build": "npm run typecheck && vite build && electron-builder --dir",
     "test": "vitest run",
@@ -17,16 +18,24 @@
     "format": "prettier --write .",
     "verify:core-pure": "node -e \"const p=require('./packages/core/package.json'); const d=Object.keys(p.dependencies||{}); if(d.length){console.error('core has dependencies:',d);process.exit(1)} console.log('core is dependency-free')\""
   },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1"
+  },
   "build": {
     "appId": "com.ammachinetools.gstledger",
     "productName": "GST Ledger",
+    "npmRebuild": false,
     "directories": {
       "output": "release"
     },
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
+      "node_modules/better-sqlite3/**/*",
       "package.json"
+    ],
+    "asarUnpack": [
+      "**/better-sqlite3/**/*.node"
     ],
     "win": {
       "target": "dir"
