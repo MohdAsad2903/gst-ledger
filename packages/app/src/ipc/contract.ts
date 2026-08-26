@@ -34,8 +34,8 @@ export interface SystemHealth {
 
 export interface AppSettingsSnapshot {
   roundingRule: RoundingRule;
-  varianceInfoPaise: number;
-  varianceWarnPaise: number;
+  varianceInfoPaise: string; // plain decimal string e.g. "2.00"
+  varianceWarnPaise: string; // plain decimal string e.g. "100.00"
   defaultStateCode: string;
   backupRetainCount: number;
   backupOnAppClose: boolean;
@@ -70,20 +70,20 @@ export interface CalcDemoInput {
 
 export interface CalcDemoResult {
   parsed: {
-    total?: string;
-    tax?: string;
+    total?: string; // plain decimal string e.g. "141542.00"
+    tax?: string; // plain decimal string e.g. "21591.00"
     errors: ValidationIssue[];
   };
-  taxableAmount: string | null; // e.g. "₹1,19,951.00"
-  enteredTax: string | null; // e.g. "₹21,591.00"
-  expectedTax: string | null; // e.g. "₹21,591.00"
-  variance: string | null; // e.g. "₹0.00" or "-₹1.00"
+  taxableAmount: string | null; // plain decimal string e.g. "119951.00"
+  enteredTax: string | null; // plain decimal string e.g. "21591.00"
+  expectedTax: string | null; // plain decimal string e.g. "21591.00"
+  variance: string | null; // plain decimal string e.g. "0.00" or "-1.00"
   varianceSeverity: VarianceSeverity;
   supplyType: 'INTRA' | 'INTER' | null;
   split: {
-    cgst: string;
-    sgst: string;
-    igst: string;
+    cgst: string; // plain decimal string e.g. "10796.00"
+    sgst: string; // plain decimal string e.g. "10795.00"
+    igst: string; // plain decimal string e.g. "0.00"
     flags: string[];
   } | null;
   roundingRuleUsed: RoundingRule;
@@ -110,6 +110,9 @@ export interface VerifyReportDTO {
   message: string;
 }
 
+/**
+ * Single Source of Truth for all IPC Channels and their signatures.
+ */
 export interface IpcContract {
   'system:getHealth': () => Promise<SystemHealth>;
   'system:getSettings': () => Promise<AppSettingsSnapshot>;

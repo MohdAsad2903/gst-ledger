@@ -47,8 +47,11 @@ export {
 
 // Repositories & Audit
 export { withAudit, type AuditAction, type AuditParams } from './repositories/audit.js';
-
 export { SettingsRepository, type AppSettingsMap } from './repositories/settings.repository.js';
+export { OrgUnitsRepository } from './repositories/org-units.repository.js';
+export { PartiesRepository, normalizePartyName } from './repositories/parties.repository.js';
+export { PeriodsRepository } from './repositories/periods.repository.js';
+export { BillsRepository } from './repositories/bills.repository.js';
 
 // Backup Service
 export { BackupService } from './backup/service.js';

@@ -109,4 +109,29 @@ describe('T13 · Property-Based Tests (fast-check)', () => {
       { numRuns: 500 },
     );
   });
+
+  it('Defect 1 & Criterion 11 · splitTax non-negative property across 20,000 runs: cgst >= 0n, sgst >= 0n, cgst + sgst === totalTax for both rules', () => {
+    fc.assert(
+      fc.property(
+        fc.bigInt({ min: 0n, max: 100_000_000_000n }), // taxable: up to ₹1,00,00,00,000
+        fc.bigInt({ min: 0n, max: 30_000_000_000n }), // totalTax: up to ₹30,00,00,000
+        fc.constantFrom(0n, 25n, 500n, 1200n, 1800n, 2800n, 4000n), // rateBps including odd 25 bps
+        fc.constantFrom(...rules),
+        (taxableN, totalTaxN, rateBps, rule) => {
+          const split = splitTax({
+            taxable: paise(taxableN),
+            totalTax: paise(totalTaxN),
+            rateBps,
+            supplyType: 'INTRA',
+            rule,
+          });
+
+          const nonNegative = split.cgst >= 0n && split.sgst >= 0n;
+          const exactSum = split.cgst + split.sgst === paise(totalTaxN);
+          return nonNegative && exactSum;
+        },
+      ),
+      { numRuns: 20000 },
+    );
+  });
 });

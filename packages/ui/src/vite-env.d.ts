@@ -36,8 +36,8 @@ export interface SystemHealth {
 
 export interface AppSettingsSnapshot {
   roundingRule: RoundingRule;
-  varianceInfoPaise: number;
-  varianceWarnPaise: number;
+  varianceInfoPaise: string;
+  varianceWarnPaise: string;
   defaultStateCode: string;
   backupRetainCount: number;
   backupOnAppClose: boolean;

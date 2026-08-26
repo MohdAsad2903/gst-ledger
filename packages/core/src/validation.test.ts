@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { paise } from './types.js';
-import { validateBillAmounts } from './validation.js';
+import { validateBillAmounts, messageForAmountError } from './validation.js';
 
 describe('validateBillAmounts & RATE_NOT_RECOGNISED', () => {
   const standardRates = [0n, 500n, 1800n, 4000n]; // 0%, 5%, 18%, 40%
@@ -143,5 +143,30 @@ describe('validateBillAmounts & RATE_NOT_RECOGNISED', () => {
     });
 
     expect(issues.some(i => i.code === 'RATE_NOT_RECOGNISED')).toBe(false);
+  });
+});
+
+describe('Defect 6 · messageForAmountError (Plain Language Error Messages)', () => {
+  it('maps EMPTY correctly for total and tax', () => {
+    expect(messageForAmountError('EMPTY', 'total')).toBe('Enter the total amount.');
+    expect(messageForAmountError('EMPTY', 'tax')).toBe('Enter the GST amount.');
+  });
+
+  it('maps NOT_A_NUMBER', () => {
+    expect(messageForAmountError('NOT_A_NUMBER', 'total')).toBe('Enter an amount using numbers only.');
+  });
+
+  it('maps MALFORMED', () => {
+    expect(messageForAmountError('MALFORMED', 'total')).toBe('That amount is not in a recognised format.');
+  });
+
+  it('maps TOO_MANY_DECIMALS', () => {
+    expect(messageForAmountError('TOO_MANY_DECIMALS', 'total')).toBe('Enter at most two decimal places.');
+  });
+
+  it('maps NEGATIVE_NOT_ALLOWED', () => {
+    expect(messageForAmountError('NEGATIVE_NOT_ALLOWED', 'total')).toBe(
+      'Amounts cannot be negative. Use a credit note instead.',
+    );
   });
 });

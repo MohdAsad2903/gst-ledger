@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { paise } from './types.js';
-import { parseAmountToPaise, formatPaise } from './money.js';
+import {
+  parseAmountToPaise,
+  formatPaise,
+  paiseToDecimalString,
+  decimalStringToPaise,
+} from './money.js';
 
 describe('T11 · parseAmountToPaise', () => {
   const acceptCases = [
@@ -14,6 +19,8 @@ describe('T11 · parseAmountToPaise', () => {
     { input: '0', expected: 0n },
     { input: '1234.5', expected: 123450n },
     { input: '.50', expected: 50n },
+    { input: '.5', expected: 50n },
+    { input: '0.', expected: 0n },
     { input: '100.', expected: 10000n },
   ];
 
@@ -25,6 +32,9 @@ describe('T11 · parseAmountToPaise', () => {
   }
 
   const rejectCases = [
+    { input: '.', error: 'MALFORMED' as const },
+    { input: '₹.', error: 'MALFORMED' as const },
+    { input: '1-2', error: 'MALFORMED' as const },
     { input: '1.234', error: 'TOO_MANY_DECIMALS' as const },
     { input: '1.2.3', error: 'MALFORMED' as const },
     { input: 'abc', error: 'NOT_A_NUMBER' as const },
@@ -47,6 +57,26 @@ describe('T11 · parseAmountToPaise', () => {
       expect(result).toEqual({ ok: false, error: c.error });
     });
   }
+});
+
+describe('Defect 4 · paiseToDecimalString & decimalStringToPaise', () => {
+  it('formats amounts as plain decimal strings without commas or currency symbols', () => {
+    expect(paiseToDecimalString(paise(11995100n))).toBe('119951.00');
+    expect(paiseToDecimalString(paise(-100n))).toBe('-1.00');
+    expect(paiseToDecimalString(paise(0n))).toBe('0.00');
+    expect(paiseToDecimalString(paise(50n))).toBe('0.50');
+    expect(paiseToDecimalString(paise(27150300n))).toBe('271503.00');
+  });
+
+  it('round-trips decimalStringToPaise(paiseToDecimalString(p)) === p', () => {
+    const testPaise = [0n, 1n, 50n, 99n, 100n, 11995100n, -100n, -27150300n];
+    for (const val of testPaise) {
+      const p = paise(val);
+      const str = paiseToDecimalString(p);
+      const res = decimalStringToPaise(str);
+      expect(res).toEqual({ ok: true, value: p });
+    }
+  });
 });
 
 describe('T12 · formatPaise — Indian Digit Grouping', () => {
@@ -79,9 +109,11 @@ describe('T12 · formatPaise — Indian Digit Grouping', () => {
     expect(formatPaise(paise(-18264400n), { symbol: true })).toBe('-₹1,82,644.00');
   });
 
-  it('supports 0 decimals option', () => {
+  it('Defect 5: rounds instead of truncating when decimals is 0', () => {
+    expect(formatPaise(paise(12399n), { decimals: 0 })).toBe('124');
+    expect(formatPaise(paise(12350n), { decimals: 0, roundingRule: 'HALF_DOWN' })).toBe('123');
+    expect(formatPaise(paise(12350n), { decimals: 0, roundingRule: 'HALF_UP' })).toBe('124');
     expect(formatPaise(paise(18264400n), { decimals: 0 })).toBe('1,82,644');
-    expect(formatPaise(paise(18264450n), { decimals: 0 })).toBe('1,82,644');
   });
 
   it('handles negative amounts correctly', () => {

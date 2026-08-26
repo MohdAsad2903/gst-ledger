@@ -14,6 +14,8 @@
 // Types & Money constructor
 export {
   paise,
+  ok,
+  err,
   COMPANY_ROUNDING_RULE,
   type Paise,
   type Result,
@@ -21,21 +23,47 @@ export {
   type SupplyType,
   type VarianceSeverity,
   type AmountError,
+  type MoneyError,
   type GstinError,
   type ClassifyError,
   type ParsedGstin,
   type TaxSplit,
   type ValidationIssue,
+  type OrgUnit,
+  type Party,
+  type Period,
+  type PeriodOpeningCredit,
+  type Bill,
+  type BillTaxLine,
+  type DuplicateBillError,
+  type ProbableDuplicateMatch,
+  type CreateBillInput,
+  type BillDirection,
+  type BillStatus,
+  type PaymentStatus,
+  type ItcStatus,
 } from './types.js';
 
 // Money parsing & formatting
-export { parseAmountToPaise, formatPaise, type FormatPaiseOptions } from './money.js';
+export {
+  parseAmountToPaise,
+  formatPaise,
+  paiseToDecimalString,
+  decimalStringToPaise,
+  type FormatPaiseOptions,
+} from './money.js';
 
 // Rounding
 export { roundToRupee } from './rounding.js';
 
 // Tax calculations, variance & split
-export { expectedTaxPaise, taxVariancePaise, varianceSeverity, splitTax } from './tax.js';
+export {
+  expectedTaxPaise,
+  halfRateTaxPaise,
+  taxVariancePaise,
+  varianceSeverity,
+  splitTax,
+} from './tax.js';
 
 // Classification & State resolution
 export {
@@ -48,8 +76,8 @@ export {
 // GSTIN validation & checksum
 export { validateGstin } from './gstin.js';
 
-// Bill amount validation
-export { validateBillAmounts } from './validation.js';
+// Bill amount validation & error messaging
+export { validateBillAmounts, messageForAmountError } from './validation.js';
 
 // Utilities
 export { financialYearOf, normalizeBillNumber } from './utils.js';

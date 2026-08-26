@@ -6,6 +6,7 @@ import {
   type TaxSplit,
   type VarianceSeverity,
 } from './types.js';
+import { roundToRupee } from './rounding.js';
 
 /**
  * Computes expected GST tax in Paise for a taxable amount and rate in basis points (18% = 1800n).
@@ -40,6 +41,31 @@ export function expectedTaxPaise(taxable: Paise, rateBps: bigint, rule: Rounding
     rule === 'HALF_DOWN'
       ? (2n * N + 1_000_000n - 1n) / 2_000_000n
       : (2n * N + 1_000_000n) / 2_000_000n;
+
+  const r = R * 100n;
+  return paise(neg ? -r : r);
+}
+
+/**
+ * Tax at half the given rate, without truncating an odd rateBps.
+ *
+ * Avoids integer division truncation on odd basis points (e.g. 25 bps / 2n -> 12 bps).
+ *
+ * @param taxable Taxable amount in Paise
+ * @param rateBps Full tax rate in basis points
+ * @param rule Rounding rule
+ * @returns Half-rate tax in Paise rounded to whole rupee
+ */
+export function halfRateTaxPaise(taxable: Paise, rateBps: bigint, rule: RoundingRule): Paise {
+  const neg = taxable < 0n;
+  const abs = neg ? -taxable : taxable;
+  if (abs === 0n || rateBps === 0n) return paise(0n);
+
+  const N = abs * rateBps; // full-tax rupee value = N / 1_000_000
+  const R =
+    rule === 'HALF_DOWN'
+      ? (N + 1_000_000n - 1n) / 2_000_000n // = ceil(N / 2e6 - 0.5)
+      : (N + 1_000_000n) / 2_000_000n;
 
   const r = R * 100n;
   return paise(neg ? -r : r);
@@ -102,12 +128,14 @@ export function varianceSeverity(
  *   igst = totalTax, cgst = 0, sgst = 0
  *
  * For INTRA (Intra-State):
- *   cgst = expectedTaxPaise(taxable, rateBps / 2, rule)
+ *   cgst = halfRateTaxPaise(taxable, rateBps, rule)
  *   sgst = totalTax - cgst
- *   igst = 0
+ *   If sgst < 0 or |cgst - sgst| > ₹1 (100 paise), fall back to halving entered tax:
+ *     cgst = roundToRupee(totalTax / 2, rule)
+ *     sgst = totalTax - cgst
+ *     flag = 'SPLIT_FROM_ENTERED'
  *
  * SGST is derived by subtraction so that cgst + sgst === totalTax ALWAYS.
- * If |cgst - sgst| > ₹1 (100 paise), the SPLIT_ASYMMETRY flag is set.
  *
  * @param params Split parameters (supplyType, totalTax, taxable, rateBps, rule)
  * @returns TaxSplit object containing cgst, sgst, igst, and flags
@@ -130,12 +158,18 @@ export function splitTax(params: {
     };
   }
 
-  // INTRA supply: split half rate to CGST, derive SGST by subtraction
-  const halfRateBps = rateBps / 2n;
-  const cgst = expectedTaxPaise(taxable, halfRateBps, rule);
-  const sgst = paise(totalTax - cgst);
+  // INTRA supply
+  let cgst = halfRateTaxPaise(taxable, rateBps, rule);
+  let sgst = paise(totalTax - cgst);
+
+  const flags: Array<'SPLIT_ASYMMETRY' | 'SPLIT_FROM_ENTERED'> = [];
+
   const diff = cgst > sgst ? cgst - sgst : sgst - cgst;
-  const flags: Array<'SPLIT_ASYMMETRY'> = diff > 100n ? ['SPLIT_ASYMMETRY'] : [];
+  if (sgst < 0n || diff > 100n) {
+    cgst = roundToRupee(paise(totalTax / 2n), rule);
+    sgst = paise(totalTax - cgst);
+    flags.push('SPLIT_FROM_ENTERED');
+  }
 
   return {
     cgst,

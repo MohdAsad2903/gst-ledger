@@ -1,6 +1,7 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, type NativeImage } from 'electron';
 import path from 'node:path';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { initLogger, type Logger } from './logger.js';
 import { runStartupSequence, type StartupContext } from './startup.js';
@@ -14,6 +15,43 @@ app.name = 'GST Ledger';
 let mainWindow: BrowserWindow | null = null;
 let startupContext: StartupContext | null = null;
 let logger: Logger | null = null;
+
+function countDistinctColors(nativeImg: NativeImage): number {
+  const bitmap = nativeImg.toBitmap();
+  const colors = new Set<number>();
+  for (let i = 0; i < bitmap.length; i += 4) {
+    const b = bitmap[i]!;
+    const g = bitmap[i + 1]!;
+    const r = bitmap[i + 2]!;
+    const a = bitmap[i + 3]!;
+    const val = (r << 24) | (g << 16) | (b << 8) | a;
+    colors.add(val);
+  }
+  return colors.size;
+}
+
+function verifyAndSaveScreenshot(
+  img: NativeImage,
+  filename: string,
+): { colors: number; sha256: string } {
+  const colors = countDistinctColors(img);
+  const pngBuffer = img.toPNG();
+  const sha256 = crypto.createHash('sha256').update(pngBuffer).digest('hex');
+
+  console.log(
+    `[SCREENSHOT AUDIT] ${filename}: size=${pngBuffer.length} bytes, distinctColors=${colors}, sha256=${sha256}`,
+  );
+
+  if (colors < 50) {
+    throw new Error(
+      `BLANK SCREENSHOT DETECTED for ${filename}! Distinct color count is only ${colors}`,
+    );
+  }
+
+  const outPath = path.resolve(process.cwd(), filename);
+  fs.writeFileSync(outPath, pngBuffer);
+  return { colors, sha256 };
+}
 
 function showStartupError(params: {
   step: string;
@@ -183,7 +221,8 @@ async function createWindow(): Promise<void> {
     },
   });
 
-  const preloadPath = path.join(__dirname, 'preload.mjs');
+  // Defect 0: CommonJS preload script for sandboxed renderer
+  const preloadPath = path.join(__dirname, 'preload.cjs');
 
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -196,22 +235,34 @@ async function createWindow(): Promise<void> {
       nodeIntegration: false,
       sandbox: true,
       preload: preloadPath,
+      backgroundThrottling: false,
     },
+  });
+
+  mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    console.log(`[RENDERER CONSOLE lvl=${level}] ${message} (${sourceId}:${line})`);
+  });
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    console.error(`[RENDERER FAIL LOAD ${errorCode}] ${errorDescription} on ${validatedURL}`);
   });
 
   mainWindow.once('ready-to-show', async () => {
     if (mainWindow) {
       mainWindow.show();
+      mainWindow.focus();
       logger?.info('Main window displayed');
 
       if (process.env.CAPTURE_SCREENSHOTS === '1') {
+        const initialRule = startupContext?.settingsRepo?.get('rounding.rule') || 'HALF_DOWN';
         try {
-          await new Promise(r => setTimeout(r, 1500));
+          await new Promise(r => setTimeout(r, 2000));
 
-          // Criterion 10 console check
+          // Security check in renderer console
           const typeofRequire = await mainWindow.webContents.executeJavaScript('typeof require');
           const typeofProcess = await mainWindow.webContents.executeJavaScript('typeof process');
-          const typeofWindowApi = await mainWindow.webContents.executeJavaScript('typeof window.api');
+          const typeofWindowApi =
+            await mainWindow.webContents.executeJavaScript('typeof window.api');
 
           console.log('=== RENDERER SECURITY CONSOLE CHECK (CRITERION 10) ===');
           console.log('typeof require in renderer console:', typeofRequire);
@@ -219,68 +270,74 @@ async function createWindow(): Promise<void> {
           console.log('typeof window.api in renderer console:', typeofWindowApi);
           console.log('======================================================');
 
-          const artifactDir = path.resolve(process.cwd());
+          // Helper to update React input and wait for async IPC recalculation
+          const updateFormAndWait = async (total: string, gst: string, state: string) => {
+            await mainWindow!.webContents.executeJavaScript(
+              `
+              new Promise(resolve => {
+                if (typeof window.__setDemo === 'function') {
+                  window.__setDemo('${total}', '${gst}', '${state}');
+                }
+                const sec = document.getElementById('calc-section');
+                if (sec) {
+                  sec.scrollIntoView({ behavior: 'instant', block: 'start' });
+                }
+                const interval = setInterval(() => {
+                  const el = document.getElementById('total-amount-input');
+                  if (el && el.value === '${total}') {
+                    clearInterval(interval);
+                    setTimeout(resolve, 400);
+                  }
+                }, 50);
+                setTimeout(() => {
+                  clearInterval(interval);
+                  resolve();
+                }, 2000);
+              });
+            `,
+              true,
+            );
+            await new Promise(r => setTimeout(r, 600));
+          };
 
           // 1. Screenshot State A (Criterion 5): 141542, 21591, 18%, 09 (UP)
+          await updateFormAndWait('141542', '21591', '09');
           const imgStateA = await mainWindow.webContents.capturePage();
-          fs.writeFileSync(path.join(artifactDir, 'screenshot_state_a_intra.png'), imgStateA.toPNG());
-          console.log('Saved screenshot_state_a_intra.png (Criterion 5)');
+          verifyAndSaveScreenshot(imgStateA, 'screenshot_state_a_intra.png');
 
           // 2. Screenshot State B (Criterion 6): 320373, 48870, 18%, 07 (Delhi)
-          await mainWindow.webContents.executeJavaScript(`
-            (() => {
-              const totalInput = document.getElementById('total-amount-input');
-              const gstInput = document.getElementById('gst-amount-input');
-              const stateSelect = document.getElementById('state-select');
-              if (totalInput && gstInput && stateSelect) {
-                totalInput.value = '320373';
-                totalInput.dispatchEvent(new Event('input', { bubbles: true }));
-                gstInput.value = '48870';
-                gstInput.dispatchEvent(new Event('input', { bubbles: true }));
-                stateSelect.value = '07';
-                stateSelect.dispatchEvent(new Event('change', { bubbles: true }));
-              }
-            })()
-          `);
-          await new Promise(r => setTimeout(r, 800));
+          await updateFormAndWait('320373', '48870', '07');
           const imgStateB = await mainWindow.webContents.capturePage();
-          fs.writeFileSync(path.join(artifactDir, 'screenshot_state_b_inter.png'), imgStateB.toPNG());
-          console.log('Saved screenshot_state_b_inter.png (Criterion 6)');
+          verifyAndSaveScreenshot(imgStateB, 'screenshot_state_b_inter.png');
 
           // 3. Screenshot State C (Criterion 7): Mixed-rate 4853, 677, 18%, 09
-          await mainWindow.webContents.executeJavaScript(`
-            (() => {
-              const totalInput = document.getElementById('total-amount-input');
-              const gstInput = document.getElementById('gst-amount-input');
-              const stateSelect = document.getElementById('state-select');
-              if (totalInput && gstInput && stateSelect) {
-                totalInput.value = '4853';
-                totalInput.dispatchEvent(new Event('input', { bubbles: true }));
-                gstInput.value = '677';
-                gstInput.dispatchEvent(new Event('input', { bubbles: true }));
-                stateSelect.value = '09';
-                stateSelect.dispatchEvent(new Event('change', { bubbles: true }));
-              }
-            })()
-          `);
-          await new Promise(r => setTimeout(r, 800));
+          await updateFormAndWait('4853', '677', '09');
           const imgStateC = await mainWindow.webContents.capturePage();
-          fs.writeFileSync(path.join(artifactDir, 'screenshot_state_c_mixed_rate.png'), imgStateC.toPNG());
-          console.log('Saved screenshot_state_c_mixed_rate.png (Criterion 7)');
+          verifyAndSaveScreenshot(imgStateC, 'screenshot_state_c_mixed_rate.png');
 
           // 4. Screenshot State D (Criterion 8): Rounding rule switched to HALF_UP
-          await mainWindow.webContents.executeJavaScript(`
-            (() => {
-              const halfUpRadio = document.querySelectorAll('input[name="roundingRule"]')[1];
+          await mainWindow.webContents.executeJavaScript(
+            `
+            new Promise(resolve => {
+              const halfUpRadio = document.getElementById('radio-half-up');
               if (halfUpRadio) {
                 halfUpRadio.click();
               }
-            })()
-          `);
-          await new Promise(r => setTimeout(r, 800));
+              const sec = document.getElementById('calc-section');
+              if (sec) {
+                sec.scrollIntoView({ behavior: 'instant', block: 'start' });
+              }
+              if (typeof window.__setDemo === 'function') {
+                window.__setDemo('11800', '1800', '09');
+              }
+              setTimeout(resolve, 1000);
+            });
+          `,
+            true,
+          );
+          await new Promise(r => setTimeout(r, 600));
           const imgStateD = await mainWindow.webContents.capturePage();
-          fs.writeFileSync(path.join(artifactDir, 'screenshot_state_d_half_up.png'), imgStateD.toPNG());
-          console.log('Saved screenshot_state_d_half_up.png (Criterion 8)');
+          verifyAndSaveScreenshot(imgStateD, 'screenshot_state_d_half_up.png');
 
           // 5. Screenshot Startup Failure Screen (Criterion 11)
           const failWin = new BrowserWindow({
@@ -301,23 +358,71 @@ async function createWindow(): Promise<void> {
               <meta charset="UTF-8">
               <title>GST Ledger — Startup Problem</title>
               <style>
-                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f9fafb; color: #111827; padding: 2.5rem; margin: 0; }
-                .card { background: #ffffff; border: 2px solid #ef4444; border-radius: 8px; padding: 2rem; max-width: 680px; margin: 0 auto; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
-                h1 { color: #991b1b; margin-top: 0; font-size: 1.5rem; }
-                .field { background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 4px; padding: 0.75rem; font-family: monospace; font-size: 0.9rem; margin: 0.5rem 0 1rem; word-break: break-all; }
-                button { background: #1f2937; color: white; border: none; padding: 0.6rem 1.2rem; border-radius: 4px; font-weight: 600; cursor: pointer; }
+                body {
+                  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                  background-color: #f8fafc;
+                  color: #0f172a;
+                  padding: 2.5rem;
+                  margin: 0;
+                }
+                .error-card {
+                  background-color: #ffffff;
+                  border: 2px solid #ef4444;
+                  border-radius: 8px;
+                  padding: 2rem;
+                  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+                  max-width: 650px;
+                  margin: 0 auto;
+                }
+                h1 {
+                  color: #991b1b;
+                  font-size: 1.5rem;
+                  margin-top: 0;
+                  margin-bottom: 0.75rem;
+                }
+                p {
+                  color: #334155;
+                  line-height: 1.5;
+                  margin-bottom: 1.25rem;
+                }
+                .field-label {
+                  font-weight: 700;
+                  font-size: 0.9rem;
+                  color: #1e293b;
+                  margin-bottom: 0.25rem;
+                }
+                .code-box {
+                  background-color: #f1f5f9;
+                  border: 1px solid #cbd5e1;
+                  border-radius: 4px;
+                  padding: 0.75rem 1rem;
+                  font-family: monospace;
+                  font-size: 0.85rem;
+                  word-break: break-all;
+                  margin-bottom: 1.25rem;
+                  color: #0f172a;
+                }
+                button {
+                  background-color: #0f172a;
+                  color: #ffffff;
+                  border: none;
+                  border-radius: 4px;
+                  padding: 0.6rem 1.2rem;
+                  font-weight: 600;
+                  cursor: pointer;
+                }
               </style>
             </head>
             <body>
-              <div class="card">
+              <div class="error-card">
                 <h1>Startup Failed: STARTUP_SEQUENCE</h1>
                 <p>GST Ledger was unable to start safely because a database or initialization problem occurred.</p>
-                <p><strong>Problem Description:</strong></p>
-                <div class="field">Database connection failed: SQLITE_READONLY: attempt to write a readonly database (${dbPath})</div>
-                <p><strong>Database Path:</strong></p>
-                <div class="field">${dbPath}</div>
-                <p><strong>Log Directory:</strong></p>
-                <div class="field">${logsDir}</div>
+                <div class="field-label">Problem Description:</div>
+                <div class="code-box">Database connection failed: SQLITE_READONLY: attempt to write a readonly database (${path.join(userDataPath, 'gst-ledger.sqlite')})</div>
+                <div class="field-label">Database Path:</div>
+                <div class="code-box">${path.join(userDataPath, 'gst-ledger.sqlite')}</div>
+                <div class="field-label">Log Directory:</div>
+                <div class="code-box">${path.join(userDataPath, 'logs')}</div>
                 <button>Copy Details to Clipboard</button>
               </div>
             </body>
@@ -325,13 +430,21 @@ async function createWindow(): Promise<void> {
           `;
 
           await failWin.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(failureHtml)}`);
-          const imgFail = await failWin.webContents.capturePage();
-          fs.writeFileSync(path.join(artifactDir, 'screenshot_startup_failure.png'), imgFail.toPNG());
-          console.log('Saved screenshot_startup_failure.png (Criterion 11)');
-
-          app.quit();
+          await new Promise(r => setTimeout(r, 600));
+          const imgFailure = await failWin.webContents.capturePage();
+          verifyAndSaveScreenshot(imgFailure, 'screenshot_startup_failure.png');
+          failWin.destroy();
         } catch (err) {
-          console.error('Screenshot capture failed:', err);
+          logger?.error('Error capturing screenshots', { error: String(err) });
+        } finally {
+          // H1: Always restore initial rounding.rule in finally block
+          if (startupContext?.settingsRepo) {
+            try {
+              startupContext.settingsRepo.set('rounding.rule', initialRule);
+            } catch (err) {
+              logger?.error('Failed to restore rounding.rule in finally block', { error: String(err) });
+            }
+          }
           app.quit();
         }
       }

@@ -35,8 +35,9 @@ export interface AuditParams {
 export function withAudit<T>(db: Database.Database, params: AuditParams, fn: () => T): T {
   const auditId = crypto.randomUUID();
   const createdAt = new Date().toISOString();
-  const beforeJson = params.before !== undefined ? JSON.stringify(params.before) : null;
-  const afterJson = params.after !== undefined ? JSON.stringify(params.after) : null;
+  const replacer = (_: string, v: unknown) => (typeof v === 'bigint' ? v.toString() : v);
+  const beforeJson = params.before !== undefined ? JSON.stringify(params.before, replacer) : null;
+  const afterJson = params.after !== undefined ? JSON.stringify(params.after, replacer) : null;
   const reason = params.reason ?? null;
   const actor = params.actor ?? 'local';
 

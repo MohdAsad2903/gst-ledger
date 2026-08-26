@@ -148,6 +148,15 @@ Tests       202 passed (202)
 
 ---
 
+## 🛡️ Standing Rule — Business Data Integrity
+
+> [!IMPORTANT]
+> **Never invent business data.** Party names, GSTINs, bill numbers, dates, addresses and amounts come from a supplied source or they do not go in at all. If a value is missing, unreadable, or fails validation, record it exactly as supplied and flag it. If a required value has no source, leave it null and report the gap — do not substitute a plausible-looking one, do not generate a value that satisfies a checksum, and never pad a list to reach an expected count.
+>
+> If following a prompt would require inventing data, stop and report that instead. A prompt that cannot be satisfied honestly is a prompt that needs correcting, and saying so is the correct outcome.
+
+---
+
 ## 📄 License
 
 Proprietary — Internal application for A.M Machine Tool and Dies. All rights reserved.

@@ -27,7 +27,6 @@ export interface MigrationOptions {
   migrationsDir?: string;
   /**
    * Hook executed immediately before pending migrations are run.
-   * Part 1D will use this to take an automatic backup before any migration.
    */
   beforeMigrate?: (pending: MigrationFile[]) => Promise<void> | void;
 }
@@ -58,10 +57,12 @@ export function getDefaultMigrationsDir(): string {
 }
 
 /**
- * Computes SHA-256 hash of a migration file's content.
+ * Computes SHA-256 hash of a migration file's content after normalising line endings to LF.
+ * Normalisation prevents line-ending variance (e.g. git autocrlf on Windows) from breaking checksums.
  */
 export function computeFileChecksum(content: string): string {
-  return crypto.createHash('sha256').update(content, 'utf8').digest('hex');
+  const normalized = content.replace(/\r\n/g, '\n');
+  return crypto.createHash('sha256').update(normalized, 'utf8').digest('hex');
 }
 
 /**
@@ -141,6 +142,7 @@ export function getCurrentSchemaVersion(db: Database.Database): number {
 
 /**
  * Identifies pending migrations that have not yet been applied.
+ * Validates checksum integrity, detects deleted migration files, and migrates legacy raw-byte checksums.
  */
 export function getPendingMigrations(
   db: Database.Database,
@@ -153,17 +155,9 @@ export function getPendingMigrations(
   }
 
   const available = loadMigrationFiles(migrationsDir);
-
-  // Validate existing applied migrations against file checksums
-  for (const file of available) {
-    const appliedRecord = appliedMap.get(file.version);
-    if (appliedRecord) {
-      if (appliedRecord.checksum !== file.checksum) {
-        throw new Error(
-          `Migration checksum mismatch for migration ${file.version} (${file.name}): applied checksum ${appliedRecord.checksum} !== file checksum ${file.checksum}. Applied migrations must never be modified.`,
-        );
-      }
-    }
+  const availableMap = new Map<number, MigrationFile>();
+  for (const f of available) {
+    availableMap.set(f.version, f);
   }
 
   // Check if database version is ahead of available migrations
@@ -173,6 +167,38 @@ export function getPendingMigrations(
     throw new Error(
       `Database schema version (${maxApplied}) is ahead of application supported version (${maxAvailable}). This file was created by a newer version of GST Ledger.`,
     );
+  }
+
+  // Defect 10: Check for deleted migration files that were previously applied
+  for (const appRow of applied) {
+    if (!availableMap.has(appRow.version)) {
+      throw new Error(
+        `Migration file missing for applied version ${appRow.version} (${appRow.name}).`,
+      );
+    }
+  }
+
+  // Defect 9: Validate existing applied migrations against file checksums (handling legacy CRLF hashes)
+  for (const file of available) {
+    const appliedRecord = appliedMap.get(file.version);
+    if (appliedRecord) {
+      if (appliedRecord.checksum !== file.checksum) {
+        // Check if recorded checksum was the unnormalized raw hash of this file
+        const rawHash = crypto.createHash('sha256').update(file.sql, 'utf8').digest('hex');
+        if (appliedRecord.checksum === rawHash) {
+          // Transparently update the legacy recorded checksum to normalized LF hash
+          db.prepare('UPDATE schema_migrations SET checksum = ? WHERE version = ?').run(
+            file.checksum,
+            file.version,
+          );
+          appliedRecord.checksum = file.checksum;
+        } else {
+          throw new Error(
+            `Migration checksum mismatch for migration ${file.version} (${file.name}): applied checksum ${appliedRecord.checksum} !== file checksum ${file.checksum}. Applied migrations must never be modified.`,
+          );
+        }
+      }
+    }
   }
 
   return available.filter(f => !appliedMap.has(f.version));

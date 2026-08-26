@@ -4,6 +4,7 @@ import electron from 'vite-plugin-electron/simple';
 import path from 'node:path';
 
 export default defineConfig({
+  base: './',
   root: path.resolve(__dirname, 'packages/ui'),
   publicDir: path.resolve(__dirname, 'packages/ui/public'),
   plugins: [
@@ -27,6 +28,10 @@ export default defineConfig({
             outDir: path.resolve(__dirname, 'dist-electron'),
             rollupOptions: {
               external: ['electron'],
+              output: {
+                format: 'cjs',
+                entryFileNames: 'preload.cjs',
+              },
             },
           },
         },

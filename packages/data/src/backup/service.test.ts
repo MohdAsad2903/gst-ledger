@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import Database from 'better-sqlite3';
 import { openDatabase } from '../db/connection.js';
-import { runMigrations } from '../migrations/runner.js';
+import { runMigrations, getCurrentSchemaVersion } from '../migrations/runner.js';
 import { BackupService } from './service.js';
 import { SettingsRepository } from '../repositories/settings.repository.js';
 
@@ -235,11 +235,11 @@ describe('BackupService (Part 1D)', () => {
     const res = await backupService.createBackup('MANUAL');
     expect(res.ok).toBe(true);
     if (res.ok) {
-      expect(res.value.schemaVersion).toBe(2);
+      expect(res.value.schemaVersion).toBe(getCurrentSchemaVersion(db));
     }
   });
 
-  it('handles multiple backups in the same second without filename collision', async () => {
+  it('Defect 11 · handles multiple backups in the same second without filename collision using suffix', async () => {
     const date = new Date('2026-08-25T12:00:00.000Z');
     const fn1 = backupService.generateBackupFilename('MANUAL', date);
     fs.writeFileSync(path.join(backupDir, fn1), 'test-1');
@@ -247,6 +247,10 @@ describe('BackupService (Part 1D)', () => {
     const fn2 = backupService.generateBackupFilename('MANUAL', date);
     expect(fn2).not.toBe(fn1);
     expect(fn2).toContain('-1.sqlite');
+
+    fs.writeFileSync(path.join(backupDir, fn2), 'test-2');
+    const fn3 = backupService.generateBackupFilename('MANUAL', date);
+    expect(fn3).toContain('-2.sqlite');
   });
 
   it('times backup speed on 10,000 synthetic rows', async () => {

@@ -8,7 +8,26 @@ import type {
   CalcDemoResult,
   VerifyReportDTO,
 } from './vite-env';
-import { formatPaise, paise, roundToRupee, type RoundingRule } from '@gst/core';
+import {
+  formatPaise,
+  decimalStringToPaise,
+  paise,
+  roundToRupee,
+  type RoundingRule,
+} from '@gst/core';
+
+/**
+ * Formats a plain decimal string (from IPC transport) into Indian currency presentation.
+ */
+function formatMoneyDisplay(
+  decimalStr: string | null | undefined,
+  opts: { symbol?: boolean; decimals?: 0 | 2 } = { symbol: true, decimals: 2 },
+): string {
+  if (decimalStr === null || decimalStr === undefined || decimalStr === '') return '—';
+  const parsed = decimalStringToPaise(decimalStr);
+  if (!parsed.ok) return decimalStr;
+  return formatPaise(parsed.value, opts);
+}
 
 export function App(): React.JSX.Element {
   // 1. State
@@ -18,6 +37,7 @@ export function App(): React.JSX.Element {
   const [ratesList, setRatesList] = useState<TaxRateProfileRow[]>([]);
   const [backupsList, setBackupsList] = useState<BackupRecordDTO[]>([]);
   const [verifyReports, setVerifyReports] = useState<Record<string, VerifyReportDTO>>({});
+  const [bridgeMissing, setBridgeMissing] = useState<boolean>(false);
 
   // Calculation demo inputs
   const [totalAmountInput, setTotalAmountInput] = useState<string>('141542');
@@ -33,7 +53,14 @@ export function App(): React.JSX.Element {
 
   // 2. Data Loading
   const loadSystemData = useCallback(async () => {
-    if (!window.api) return;
+    if (!window.api) {
+      console.error('Defect 0: window.api is undefined in renderer. Bridge failed to mount.', {
+        typeofRequire: typeof (window as unknown as Record<string, unknown>).require,
+        typeofProcess: typeof (window as unknown as Record<string, unknown>).process,
+      });
+      setBridgeMissing(true);
+      return;
+    }
 
     try {
       const [h, s, st, rt, bk] = await Promise.all([
@@ -56,6 +83,11 @@ export function App(): React.JSX.Element {
 
   useEffect(() => {
     loadSystemData();
+    (window as unknown as Record<string, unknown>).__setDemo = (total: string, gst: string, state: string) => {
+      setTotalAmountInput(total);
+      setGstAmountInput(gst);
+      setSelectedStateCode(state);
+    };
   }, [loadSystemData]);
 
   // 3. Live Calculation Recalculation
@@ -155,6 +187,79 @@ export function App(): React.JSX.Element {
     { input: 12351n, display: '₹123.51', expected: roundToRupee(paise(12351n), currentRule) },
     { input: 12360n, display: '₹123.60', expected: roundToRupee(paise(12360n), currentRule) },
   ];
+
+  if (bridgeMissing) {
+    return (
+      <div
+        style={{
+          fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+          background: '#f9fafb',
+          color: '#111827',
+          padding: '2.5rem',
+          minHeight: '100vh',
+          boxSizing: 'border-box',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <div
+          style={{
+            background: '#ffffff',
+            border: '2px solid #ef4444',
+            borderRadius: '8px',
+            padding: '2rem',
+            maxWidth: '680px',
+            width: '100%',
+            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+          }}
+        >
+          <h1 style={{ color: '#991b1b', marginTop: 0, fontSize: '1.5rem' }}>
+            GST Ledger could not start properly
+          </h1>
+          <p style={{ lineHeight: 1.5, margin: '0.75rem 0' }}>
+            The application could not connect to its own database service. Your data has not been changed.
+          </p>
+          <p style={{ lineHeight: 1.5, margin: '0.75rem 0' }}>
+            Please close and reopen the application. If it keeps happening, send this screen and the log file to whoever set this up.
+          </p>
+          <p style={{ marginTop: '1.25rem', marginBottom: '0.5rem', fontWeight: 600 }}>Log file location:</p>
+          <div
+            style={{
+              background: '#f3f4f6',
+              border: '1px solid #e5e7eb',
+              borderRadius: '4px',
+              padding: '0.75rem',
+              fontFamily: 'ui-monospace, monospace',
+              fontSize: '0.9rem',
+              marginBottom: '1.25rem',
+              wordBreak: 'break-all',
+            }}
+          >
+            {health?.logsDir || 'Check application data directory logs'}
+          </div>
+          <button
+            onClick={() => {
+              const text = `GST Ledger Service Connection Failure\nLog Directory: ${health?.logsDir || 'Unknown'}\ntypeof window.api: ${typeof window?.api}`;
+              navigator.clipboard.writeText(text).then(() => alert('Details copied to clipboard'));
+            }}
+            style={{
+              background: '#1f2937',
+              color: 'white',
+              border: 'none',
+              padding: '0.6rem 1.2rem',
+              borderRadius: '4px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              fontSize: '0.95rem',
+            }}
+          >
+            Copy Details to Clipboard
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <main
@@ -263,7 +368,7 @@ export function App(): React.JSX.Element {
           </div>
           <div>
             <span style={{ color: '#64748b', fontSize: '0.9rem', display: 'block' }}>Platform / OS</span>
-            <strong style={{ fontSize: '1.2rem' }}>{health?.platform ?? process.platform}</strong>
+            <strong style={{ fontSize: '1.2rem' }}>{health?.platform ?? '—'}</strong>
           </div>
           <div>
             <span style={{ color: '#64748b', fontSize: '0.9rem', display: 'block' }}>Electron / Chromium / Node</span>
@@ -599,6 +704,7 @@ export function App(): React.JSX.Element {
 
       {/* SECTION 4 · CALCULATION CHECK & LIVE DEMO */}
       <section
+        id="calc-section"
         style={{
           backgroundColor: '#ffffff',
           border: '2px solid #0f172a',
@@ -639,8 +745,10 @@ export function App(): React.JSX.Element {
             <span style={{ fontSize: '0.9rem', fontWeight: 600, color: '#334155' }}>Active Rounding:</span>
             <label style={{ fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer' }}>
               <input
+                id="radio-half-down"
                 type="radio"
                 name="roundingRule"
+                value="HALF_DOWN"
                 checked={settings?.roundingRule === 'HALF_DOWN'}
                 onChange={() => handleRoundingRuleChange('HALF_DOWN')}
               />
@@ -648,8 +756,10 @@ export function App(): React.JSX.Element {
             </label>
             <label style={{ fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: '0.25rem', cursor: 'pointer', marginLeft: '0.5rem' }}>
               <input
+                id="radio-half-up"
                 type="radio"
                 name="roundingRule"
+                value="HALF_UP"
                 checked={settings?.roundingRule === 'HALF_UP'}
                 onChange={() => handleRoundingRuleChange('HALF_UP')}
               />
@@ -833,7 +943,7 @@ export function App(): React.JSX.Element {
                 margin: '0.25rem 0',
               }}
             >
-              {calcResult?.taxableAmount ?? '—'}
+              {formatMoneyDisplay(calcResult?.taxableAmount)}
             </div>
             <span style={{ fontSize: '0.85rem', color: '#64748b' }}>
               Computed as Total Amount minus Entered GST
@@ -853,12 +963,12 @@ export function App(): React.JSX.Element {
               Expected GST ({selectedRateBps / 100}%) & Variance
             </span>
             <div style={{ fontSize: '1.5rem', fontWeight: 700, margin: '0.25rem 0', fontVariantNumeric: 'tabular-nums' }}>
-              {calcResult?.expectedTax ?? '—'}
+              {formatMoneyDisplay(calcResult?.expectedTax)}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem' }}>
               <span style={{ fontSize: '0.9rem', color: '#64748b' }}>Variance:</span>
               <strong style={{ fontSize: '1.1rem', fontVariantNumeric: 'tabular-nums' }}>
-                {calcResult?.variance ?? '—'}
+                {formatMoneyDisplay(calcResult?.variance)}
               </strong>
               {calcResult?.varianceSeverity && calcResult.varianceSeverity !== 'NONE' && (
                 <span
@@ -913,16 +1023,21 @@ export function App(): React.JSX.Element {
               <div style={{ fontSize: '0.95rem', marginTop: '0.5rem', display: 'grid', gap: '0.2rem', fontVariantNumeric: 'tabular-nums' }}>
                 {calcResult.supplyType === 'INTRA' ? (
                   <>
-                    <div>CGST (9%): <strong>{calcResult.split.cgst}</strong></div>
-                    <div>SGST (9%): <strong>{calcResult.split.sgst}</strong></div>
+                    <div>CGST (9%): <strong>{formatMoneyDisplay(calcResult.split.cgst)}</strong></div>
+                    <div>SGST (9%): <strong>{formatMoneyDisplay(calcResult.split.sgst)}</strong></div>
                   </>
                 ) : (
-                  <div>IGST (18%): <strong>{calcResult.split.igst}</strong></div>
+                  <div>IGST (18%): <strong>{formatMoneyDisplay(calcResult.split.igst)}</strong></div>
                 )}
                 {calcResult.split.flags.includes('SPLIT_ASYMMETRY') && (
                   <span style={{ fontSize: '0.75rem', color: '#b45309' }}>
                     * Asymmetric 1-paise split (sum strictly equals total tax)
                   </span>
+                )}
+                {calcResult.split.flags.includes('SPLIT_FROM_ENTERED') && (
+                  <div style={{ marginTop: '0.5rem', padding: '0.375rem 0.5rem', backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '4px', fontSize: '0.8rem', color: '#1e40af' }}>
+                    Split from the GST you entered, not from the {selectedRateBps ? `${Number(selectedRateBps) / 100}%` : '18%'} rate — the two don't match.
+                  </div>
                 )}
               </div>
             )}
@@ -934,9 +1049,15 @@ export function App(): React.JSX.Element {
           <h3 style={{ fontSize: '1.1rem', margin: '0 0 0.5rem 0' }}>
             Live Engine Rounding Demonstration (Current Rule: {currentRule})
           </h3>
-          <p style={{ fontSize: '0.9rem', color: '#64748b', margin: '0 0 1rem 0' }}>
-            Notice that ₹123.50 rounds <strong>down</strong> to ₹123 under the company rule and <strong>up</strong> to ₹124 under Section 170 CGST.
-          </p>
+          {currentRule === 'HALF_DOWN' ? (
+            <p style={{ fontSize: '0.9rem', color: '#64748b', margin: '0 0 1rem 0' }}>
+              ₹123.50 rounds <strong>down</strong> to ₹123 — your company rule. Under Section 170 it would round <strong>up</strong> to ₹124.
+            </p>
+          ) : (
+            <p style={{ fontSize: '0.9rem', color: '#64748b', margin: '0 0 1rem 0' }}>
+              ₹123.50 rounds <strong>up</strong> to ₹124 under Section 170 CGST. Under your company rule it would round <strong>down</strong> to ₹123.
+            </p>
+          )}
 
           <table
             style={{

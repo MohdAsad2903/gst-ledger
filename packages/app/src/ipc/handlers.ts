@@ -3,7 +3,8 @@ import { ipcMain } from 'electron';
 import fs from 'node:fs';
 import {
   parseAmountToPaise,
-  formatPaise,
+  paiseToDecimalString,
+  messageForAmountError,
   expectedTaxPaise,
   taxVariancePaise,
   varianceSeverity,
@@ -27,6 +28,7 @@ import type {
   AppSettingsSnapshot,
   StateRow,
   TaxRateProfileRow,
+  IpcContract,
 } from './contract.js';
 import type { Logger } from '../logger.js';
 
@@ -42,11 +44,25 @@ export interface AppInfoContext {
 }
 
 /**
+ * Type-safe helper to register an IPC handler against IpcContract.
+ * Typo in channel name or mismatched parameters/return causes a compile error.
+ */
+function handle<K extends keyof IpcContract>(
+  channel: K,
+  fn: (...args: Parameters<IpcContract[K]>) => ReturnType<IpcContract[K]>,
+): void {
+  ipcMain.handle(channel, (_event, ...args) => fn(...(args as Parameters<IpcContract[K]>)));
+}
+
+/**
  * Handles calc:demo calculation requests from the renderer.
  *
  * CRITICAL ARCHITECTURAL REQUIREMENT:
  * Reads `rounding.rule` from app_settings directly per invocation.
  * Never caches the rule at startup so database setting changes reflect immediately.
+ *
+ * Defect 4: Monetary amounts cross IPC strictly as plain decimal strings (e.g. "119951.00"),
+ * never display strings with commas or rupee symbols.
  */
 export function handleCalcDemo(
   input: CalcDemoInput,
@@ -82,12 +98,13 @@ export function handleCalcDemo(
   const parsedTotal = parseAmountToPaise(rawTotal);
   const parsedTax = parseAmountToPaise(rawTax);
 
+  // Defect 6: Plain-language error messages
   if (!parsedTotal.ok) {
     issues.push({
       code: `TOTAL_${parsedTotal.error}`,
       severity: 'BLOCK',
       field: 'total',
-      message: `Total amount is invalid: ${parsedTotal.error.toLowerCase().replace(/_/g, ' ')}`,
+      message: messageForAmountError(parsedTotal.error, 'total'),
     });
   }
 
@@ -96,15 +113,15 @@ export function handleCalcDemo(
       code: `TAX_${parsedTax.error}`,
       severity: 'BLOCK',
       field: 'tax',
-      message: `GST amount is invalid: ${parsedTax.error.toLowerCase().replace(/_/g, ' ')}`,
+      message: messageForAmountError(parsedTax.error, 'tax'),
     });
   }
 
   if (!parsedTotal.ok || !parsedTax.ok) {
     return {
       parsed: {
-        total: parsedTotal.ok ? formatPaise(parsedTotal.value) : undefined,
-        tax: parsedTax.ok ? formatPaise(parsedTax.value) : undefined,
+        total: parsedTotal.ok ? paiseToDecimalString(parsedTotal.value) : undefined,
+        tax: parsedTax.ok ? paiseToDecimalString(parsedTax.value) : undefined,
         errors: issues,
       },
       taxableAmount: null,
@@ -139,12 +156,12 @@ export function handleCalcDemo(
   if (hasBlockingIssue || taxablePaise < 0n) {
     return {
       parsed: {
-        total: formatPaise(totalPaise),
-        tax: formatPaise(taxPaise),
+        total: paiseToDecimalString(totalPaise),
+        tax: paiseToDecimalString(taxPaise),
         errors: issues,
       },
       taxableAmount: null,
-      enteredTax: formatPaise(taxPaise),
+      enteredTax: paiseToDecimalString(taxPaise),
       expectedTax: null,
       variance: null,
       varianceSeverity: 'NONE',
@@ -179,20 +196,20 @@ export function handleCalcDemo(
 
   return {
     parsed: {
-      total: formatPaise(totalPaise),
-      tax: formatPaise(taxPaise),
+      total: paiseToDecimalString(totalPaise),
+      tax: paiseToDecimalString(taxPaise),
       errors: [],
     },
-    taxableAmount: formatPaise(taxablePaise),
-    enteredTax: formatPaise(taxPaise),
-    expectedTax: formatPaise(expectedPaise),
-    variance: formatPaise(variancePaise),
+    taxableAmount: paiseToDecimalString(taxablePaise),
+    enteredTax: paiseToDecimalString(taxPaise),
+    expectedTax: paiseToDecimalString(expectedPaise),
+    variance: paiseToDecimalString(variancePaise),
     varianceSeverity: severity,
     supplyType,
     split: {
-      cgst: formatPaise(split.cgst),
-      sgst: formatPaise(split.sgst),
-      igst: formatPaise(split.igst),
+      cgst: paiseToDecimalString(split.cgst),
+      sgst: paiseToDecimalString(split.sgst),
+      igst: paiseToDecimalString(split.igst),
       flags: split.flags,
     },
     roundingRuleUsed: roundingRule,
@@ -201,7 +218,7 @@ export function handleCalcDemo(
 }
 
 /**
- * Registers all typed IPC handlers on ipcMain.
+ * Registers all typed IPC handlers on ipcMain via type-checked handle helper.
  */
 export function registerIpcHandlers(params: {
   db: Database.Database;
@@ -213,7 +230,7 @@ export function registerIpcHandlers(params: {
   const { db, backupService, settingsRepo, logger, appInfo } = params;
 
   // 1. system:getHealth
-  ipcMain.handle('system:getHealth', async (): Promise<SystemHealth> => {
+  handle('system:getHealth', async (): Promise<SystemHealth> => {
     try {
       const dbHealth = getHealth(db);
       const currentVersion = getCurrentSchemaVersion(db);
@@ -224,10 +241,14 @@ export function registerIpcHandlers(params: {
         dbSize = fs.statSync(appInfo.databasePath).size;
       }
 
-      const countStates = (db.prepare('SELECT COUNT(*) as c FROM states').get() as { c: number })?.c ?? 0;
-      const countRates = (db.prepare('SELECT COUNT(*) as c FROM tax_rate_profiles').get() as { c: number })?.c ?? 0;
-      const countSettings = (db.prepare('SELECT COUNT(*) as c FROM app_settings').get() as { c: number })?.c ?? 0;
-      const countAudit = (db.prepare('SELECT COUNT(*) as c FROM audit_log').get() as { c: number })?.c ?? 0;
+      const countStates =
+        (db.prepare('SELECT COUNT(*) as c FROM states').get() as { c: number })?.c ?? 0;
+      const countRates =
+        (db.prepare('SELECT COUNT(*) as c FROM tax_rate_profiles').get() as { c: number })?.c ?? 0;
+      const countSettings =
+        (db.prepare('SELECT COUNT(*) as c FROM app_settings').get() as { c: number })?.c ?? 0;
+      const countAudit =
+        (db.prepare('SELECT COUNT(*) as c FROM audit_log').get() as { c: number })?.c ?? 0;
 
       return {
         ok: dbHealth.ok,
@@ -282,11 +303,12 @@ export function registerIpcHandlers(params: {
   });
 
   // 2. system:getSettings
-  ipcMain.handle('system:getSettings', async (): Promise<AppSettingsSnapshot> => {
+  handle('system:getSettings', async (): Promise<AppSettingsSnapshot> => {
+    const thresholds = settingsRepo.getVarianceThresholds();
     return {
       roundingRule: settingsRepo.getRoundingRule(),
-      varianceInfoPaise: Number(settingsRepo.getVarianceThresholds().infoPaise),
-      varianceWarnPaise: Number(settingsRepo.getVarianceThresholds().warnPaise),
+      varianceInfoPaise: paiseToDecimalString(paise(thresholds.infoPaise)),
+      varianceWarnPaise: paiseToDecimalString(paise(thresholds.warnPaise)),
       defaultStateCode: settingsRepo.getDefaultStateCode(),
       backupRetainCount: settingsRepo.getBackupRetainCount(),
       backupOnAppClose: settingsRepo.getBackupOnAppClose(),
@@ -297,45 +319,47 @@ export function registerIpcHandlers(params: {
   });
 
   // 3. system:setSetting
-  ipcMain.handle('system:setSetting', async (_, key: string, value: unknown) => {
+  handle('system:setSetting', async (key: string, value: unknown) => {
     try {
       if (typeof key !== 'string' || key.trim().length === 0) {
-        return { ok: false, error: 'INVALID_KEY' };
+        return { ok: false as const, error: 'INVALID_KEY' };
       }
       settingsRepo.set(key, value, 'Updated via System Check screen');
-      return { ok: true, value: undefined };
+      return { ok: true as const, value: undefined };
     } catch (err) {
       logger.error('Failed to update setting', { key, error: String(err) });
-      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) };
     }
   });
 
   // 4. backup:list
-  ipcMain.handle('backup:list', async () => {
+  handle('backup:list', async () => {
     return backupService.listBackups();
   });
 
   // 5. backup:create
-  ipcMain.handle('backup:create', async () => {
+  handle('backup:create', async () => {
     const res = await backupService.createBackup('MANUAL', 'User triggered from System Check');
     if (!res.ok) {
-      return { ok: false, error: res.error };
+      return { ok: false as const, error: res.error };
     }
-    return { ok: true, value: res.value };
+    return { ok: true as const, value: res.value };
   });
 
   // 6. backup:verify
-  ipcMain.handle('backup:verify', async (_, id: string) => {
+  handle('backup:verify', async (id: string) => {
     const res = await backupService.verifyBackup(id);
     if (!res.ok) {
-      return { ok: false, error: res.error };
+      return { ok: false as const, error: res.error };
     }
-    return { ok: true, value: res.value };
+    return { ok: true as const, value: res.value };
   });
 
   // 7. masters:getStates
-  ipcMain.handle('masters:getStates', async (): Promise<StateRow[]> => {
-    const rows = db.prepare('SELECT code, name, is_union_territory, is_active FROM states ORDER BY code ASC').all() as Array<{
+  handle('masters:getStates', async (): Promise<StateRow[]> => {
+    const rows = db
+      .prepare('SELECT code, name, is_union_territory, is_active FROM states ORDER BY code ASC')
+      .all() as Array<{
       code: string;
       name: string;
       is_union_territory: number;
@@ -350,8 +374,12 @@ export function registerIpcHandlers(params: {
   });
 
   // 8. masters:getRates
-  ipcMain.handle('masters:getRates', async (): Promise<TaxRateProfileRow[]> => {
-    const rows = db.prepare('SELECT id, name, rate_bps, effective_from, effective_to, is_active, notes FROM tax_rate_profiles ORDER BY rate_bps ASC').all() as Array<{
+  handle('masters:getRates', async (): Promise<TaxRateProfileRow[]> => {
+    const rows = db
+      .prepare(
+        'SELECT id, name, rate_bps, effective_from, effective_to, is_active, notes FROM tax_rate_profiles ORDER BY rate_bps ASC',
+      )
+      .all() as Array<{
       id: string;
       name: string;
       rate_bps: number;
@@ -372,7 +400,7 @@ export function registerIpcHandlers(params: {
   });
 
   // 9. calc:demo
-  ipcMain.handle('calc:demo', async (_, input: CalcDemoInput): Promise<CalcDemoResult> => {
+  handle('calc:demo', async (input: CalcDemoInput): Promise<CalcDemoResult> => {
     return handleCalcDemo(input, settingsRepo);
   });
 }

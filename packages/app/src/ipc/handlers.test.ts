@@ -6,7 +6,7 @@ import Database from 'better-sqlite3';
 import { openDatabase, runMigrations, SettingsRepository } from '@gst/data';
 import { handleCalcDemo } from './handlers.js';
 
-describe('IPC Handlers & Acceptance Criteria (Part 1E)', () => {
+describe('IPC Handlers & Acceptance Criteria (Part 1E & 1F)', () => {
   let tempDir: string;
   let dbPath: string;
   let db: Database.Database;
@@ -33,7 +33,7 @@ describe('IPC Handlers & Acceptance Criteria (Part 1E)', () => {
     }
   });
 
-  it('Acceptance Criterion 5: Total 141542, GST 21591, 18%, State 09 -> Bill Amount ₹1,19,951, CGST ₹10,796, SGST ₹10,795', () => {
+  it('Acceptance Criterion 5: Total 141542, GST 21591, 18%, State 09 -> Bill Amount 119951.00, CGST 10796.00, SGST 10795.00', () => {
     const res = handleCalcDemo(
       {
         totalAmount: '141542',
@@ -44,19 +44,19 @@ describe('IPC Handlers & Acceptance Criteria (Part 1E)', () => {
       settingsRepo,
     );
 
-    expect(res.taxableAmount).toBe('1,19,951.00');
-    expect(res.enteredTax).toBe('21,591.00');
-    expect(res.expectedTax).toBe('21,591.00');
+    expect(res.taxableAmount).toBe('119951.00');
+    expect(res.enteredTax).toBe('21591.00');
+    expect(res.expectedTax).toBe('21591.00');
     expect(res.variance).toBe('0.00');
     expect(res.varianceSeverity).toBe('NONE');
     expect(res.supplyType).toBe('INTRA');
-    expect(res.split?.cgst).toBe('10,796.00');
-    expect(res.split?.sgst).toBe('10,795.00');
+    expect(res.split?.cgst).toBe('10796.00');
+    expect(res.split?.sgst).toBe('10795.00');
     expect(res.split?.igst).toBe('0.00');
     expect(res.roundingRuleUsed).toBe('HALF_DOWN');
   });
 
-  it('Acceptance Criterion 6: Total 320373, GST 48870, 18%, State 07 -> Bill Amount ₹2,71,503, expected ₹48,871, variance -₹1 (INFO), IGST ₹48,870', () => {
+  it('Acceptance Criterion 6: Total 320373, GST 48870, 18%, State 07 -> Bill Amount 271503.00, expected 48871.00, variance -1.00 (INFO), IGST 48870.00', () => {
     const res = handleCalcDemo(
       {
         totalAmount: '320373',
@@ -67,18 +67,18 @@ describe('IPC Handlers & Acceptance Criteria (Part 1E)', () => {
       settingsRepo,
     );
 
-    expect(res.taxableAmount).toBe('2,71,503.00');
-    expect(res.enteredTax).toBe('48,870.00');
-    expect(res.expectedTax).toBe('48,871.00');
+    expect(res.taxableAmount).toBe('271503.00');
+    expect(res.enteredTax).toBe('48870.00');
+    expect(res.expectedTax).toBe('48871.00');
     expect(res.variance).toBe('-1.00');
     expect(res.varianceSeverity).toBe('INFO');
     expect(res.supplyType).toBe('INTER');
-    expect(res.split?.igst).toBe('48,870.00');
+    expect(res.split?.igst).toBe('48870.00');
     expect(res.split?.cgst).toBe('0.00');
     expect(res.split?.sgst).toBe('0.00');
   });
 
-  it('Acceptance Criterion 7: Mixed-rate Total 4853, GST 677, 18% -> variance -₹75 (WARN), RATE_NOT_RECOGNISED 16.2%', () => {
+  it('Acceptance Criterion 7: Mixed-rate Total 4853, GST 677, 18% -> variance -75.00 (WARN), RATE_NOT_RECOGNISED 16.2%', () => {
     const res = handleCalcDemo(
       {
         totalAmount: '4853',
@@ -89,7 +89,7 @@ describe('IPC Handlers & Acceptance Criteria (Part 1E)', () => {
       settingsRepo,
     );
 
-    expect(res.taxableAmount).toBe('4,176.00');
+    expect(res.taxableAmount).toBe('4176.00');
     expect(res.enteredTax).toBe('677.00');
     expect(res.expectedTax).toBe('752.00');
     expect(res.variance).toBe('-75.00');
@@ -131,18 +131,20 @@ describe('IPC Handlers & Acceptance Criteria (Part 1E)', () => {
 
     // Verify audit log entry was created for the setting change
     const auditRows = db
-      .prepare("SELECT * FROM audit_log WHERE entity_table = 'app_settings' AND entity_id = 'rounding.rule'")
+      .prepare(
+        "SELECT * FROM audit_log WHERE entity_table = 'app_settings' AND entity_id = 'rounding.rule'",
+      )
       .all() as Array<{ action: string; before_json: string; after_json: string }>;
     expect(auditRows.length).toBeGreaterThan(0);
     expect(auditRows[auditRows.length - 1]?.action).toBe('SETTING_CHANGE');
     expect(auditRows[auditRows.length - 1]?.after_json).toBe('"HALF_UP"');
   });
 
-  it('Proves no monetary values cross IPC as JavaScript numbers', () => {
+  it('Defect 4 · Monetary values cross IPC as plain decimal strings without commas or currency symbols', () => {
     const res = handleCalcDemo(
       {
-        totalAmount: '141542',
-        gstAmount: '21591',
+        totalAmount: '1,41,542.00',
+        gstAmount: '21,591.00',
         rateBps: 1800,
         counterpartyStateCode: '09',
       },
@@ -152,7 +154,7 @@ describe('IPC Handlers & Acceptance Criteria (Part 1E)', () => {
     const serialized = JSON.stringify(res);
     const parsed = JSON.parse(serialized);
 
-    // Verify all monetary fields are strings or null, never numbers
+    // Verify all monetary fields are plain decimal strings
     expect(typeof parsed.taxableAmount).toBe('string');
     expect(typeof parsed.enteredTax).toBe('string');
     expect(typeof parsed.expectedTax).toBe('string');
@@ -161,8 +163,42 @@ describe('IPC Handlers & Acceptance Criteria (Part 1E)', () => {
     expect(typeof parsed.split.sgst).toBe('string');
     expect(typeof parsed.split.igst).toBe('string');
 
-    // Ensure none of the values are raw unquoted numeric types
-    expect(parsed.taxableAmount).toBe('1,19,951.00');
-    expect(parsed.expectedTax).toBe('21,591.00');
+    // Assert strictly plain decimal strings without ',' or '₹'
+    const monetaryFields = [
+      parsed.taxableAmount,
+      parsed.enteredTax,
+      parsed.expectedTax,
+      parsed.variance,
+      parsed.split.cgst,
+      parsed.split.sgst,
+      parsed.split.igst,
+    ];
+
+    for (const field of monetaryFields) {
+      expect(field).not.toContain(',');
+      expect(field).not.toContain('₹');
+      expect(/^-?\d+\.\d{2}$/.test(field)).toBe(true);
+    }
+
+    expect(parsed.taxableAmount).toBe('119951.00');
+    expect(parsed.expectedTax).toBe('21591.00');
+  });
+
+  it('Defect 6 · IPC returns plain language error messages for invalid amounts', () => {
+    const res = handleCalcDemo(
+      {
+        totalAmount: 'abc',
+        gstAmount: '-100',
+        rateBps: 1800,
+        counterpartyStateCode: '09',
+      },
+      settingsRepo,
+    );
+
+    const totalIssue = res.issues.find(i => i.field === 'total');
+    expect(totalIssue?.message).toBe('Enter an amount using numbers only.');
+
+    const taxIssue = res.issues.find(i => i.field === 'tax');
+    expect(taxIssue?.message).toBe('Amounts cannot be negative. Use a credit note instead.');
   });
 });

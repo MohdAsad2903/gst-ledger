@@ -147,6 +147,28 @@ export class BackupService {
       return { ok: false, error: 'DIRECTORY_NOT_WRITABLE' };
     }
 
+    // Free space check before starting backup
+    try {
+      if (typeof fs.statfsSync === 'function') {
+        const stats = fs.statfsSync(backupDir);
+        const freeBytes = BigInt(stats.bavail) * BigInt(stats.bsize);
+        const currentDbSize =
+          this.db.name && fs.existsSync(this.db.name)
+            ? fs.statSync(this.db.name).size
+            : 1024 * 1024;
+        const requiredBytes = BigInt(Math.max(currentDbSize * 2, 10 * 1024 * 1024));
+        if (freeBytes < requiredBytes) {
+          this.logger?.error('Insufficient disk space for database backup', {
+            freeBytes: freeBytes.toString(),
+            requiredBytes: requiredBytes.toString(),
+          });
+          return { ok: false, error: 'DISK_FULL' };
+        }
+      }
+    } catch {
+      // Fallback if statfs is unavailable
+    }
+
     const filename = this.generateBackupFilename(trigger);
     const destPath = path.join(backupDir, filename);
 

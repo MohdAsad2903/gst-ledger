@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { paise } from './types.js';
-import { expectedTaxPaise, taxVariancePaise, varianceSeverity, splitTax } from './tax.js';
+import {
+  expectedTaxPaise,
+  halfRateTaxPaise,
+  taxVariancePaise,
+  varianceSeverity,
+  splitTax,
+} from './tax.js';
 
 describe('T3 · expectedTaxPaise at 18% (1800n, HALF_DOWN) — Real July 2026 Register Bills', () => {
   const registerBills: Array<{ name: string; taxableRupees: bigint; expectedRupees: bigint }> = [
@@ -48,6 +54,26 @@ describe('T3 · expectedTaxPaise at 18% (1800n, HALF_DOWN) — Real July 2026 Re
   it('returns 0 paise when taxable or rate is 0', () => {
     expect(expectedTaxPaise(paise(0n), 1800n, 'HALF_DOWN')).toBe(paise(0n));
     expect(expectedTaxPaise(paise(100000n), 0n, 'HALF_DOWN')).toBe(paise(0n));
+  });
+});
+
+describe('Defect 2 · halfRateTaxPaise on odd rateBps (0.25% = 25 bps)', () => {
+  it('correctly halves 25 bps without truncation on ₹10,00,000 -> ₹1,250', () => {
+    const taxablePaise = paise(100000000n); // ₹10,00,000
+    const cgst = halfRateTaxPaise(taxablePaise, 25n, 'HALF_DOWN');
+    expect(cgst).toBe(paise(125000n)); // ₹1,250
+
+    const split = splitTax({
+      supplyType: 'INTRA',
+      taxable: taxablePaise,
+      totalTax: paise(250000n), // ₹2,500
+      rateBps: 25n,
+      rule: 'HALF_DOWN',
+    });
+
+    expect(split.cgst).toBe(paise(125000n));
+    expect(split.sgst).toBe(paise(125000n));
+    expect(split.flags).toEqual([]);
   });
 });
 
@@ -100,7 +126,7 @@ describe('T5 · Variance — Four Real Disagreements from the Register', () => {
       expectedSeverity: 'INFO' as const,
     },
     {
-      name: 'Swarn Enterprises (18% + 5%)',
+      name: 'Swarn Enterprises (mixed-rate)',
       taxableRupees: 4176n,
       enteredRupees: 677n,
       rateBps: 1800n,
@@ -110,30 +136,53 @@ describe('T5 · Variance — Four Real Disagreements from the Register', () => {
   ];
 
   for (const c of cases) {
-    it(`reproduces variance for ${c.name} without altering entered figure`, () => {
-      const enteredPaise = paise(c.enteredRupees * 100n);
-      const taxablePaise = paise(c.taxableRupees * 100n);
-      const variance = taxVariancePaise(enteredPaise, taxablePaise, c.rateBps, 'HALF_DOWN');
+    it(`computes variance for ${c.name} (${c.expectedVarianceRupees} Rs, severity ${c.expectedSeverity})`, () => {
+      const variance = taxVariancePaise(
+        paise(c.enteredRupees * 100n),
+        paise(c.taxableRupees * 100n),
+        c.rateBps,
+        'HALF_DOWN',
+      );
       expect(variance).toBe(paise(c.expectedVarianceRupees * 100n));
 
       const severity = varianceSeverity(variance, defaults);
       expect(severity).toBe(c.expectedSeverity);
     });
   }
+});
 
-  it('correctly categorizes all variance severity bands', () => {
+describe('T6 · Variance Severity Thresholds', () => {
+  const defaults = { infoPaise: 200n, warnPaise: 10000n };
+
+  it('classifies exact 0 as NONE', () => {
     expect(varianceSeverity(paise(0n), defaults)).toBe('NONE');
+  });
+
+  it('classifies |v| <= 200 paise as INFO', () => {
     expect(varianceSeverity(paise(100n), defaults)).toBe('INFO');
+    expect(varianceSeverity(paise(-100n), defaults)).toBe('INFO');
     expect(varianceSeverity(paise(200n), defaults)).toBe('INFO');
+    expect(varianceSeverity(paise(-200n), defaults)).toBe('INFO');
+  });
+
+  it('classifies 200 < |v| <= 10000 paise as WARN', () => {
     expect(varianceSeverity(paise(201n), defaults)).toBe('WARN');
+    expect(varianceSeverity(paise(-201n), defaults)).toBe('WARN');
+    expect(varianceSeverity(paise(7500n), defaults)).toBe('WARN');
+    expect(varianceSeverity(paise(-7500n), defaults)).toBe('WARN');
     expect(varianceSeverity(paise(10000n), defaults)).toBe('WARN');
+    expect(varianceSeverity(paise(-10000n), defaults)).toBe('WARN');
+  });
+
+  it('classifies |v| > 10000 paise as CONFIRM', () => {
     expect(varianceSeverity(paise(10001n), defaults)).toBe('CONFIRM');
     expect(varianceSeverity(paise(-10001n), defaults)).toBe('CONFIRM');
   });
 });
 
-describe('T7 · splitTax — cgst + sgst === totalTax in Every Case', () => {
-  const intraCases = [
+describe('T7 · splitTax — Verified Splits & Corrected Edge Cases (Defect 1)', () => {
+  // Previously verified cases must remain UNCHANGED
+  const verifiedIntraCases = [
     { taxable: 119951n, totalTax: 21591n, cgst: 10796n, sgst: 10795n },
     { taxable: 51000n, totalTax: 9180n, cgst: 4590n, sgst: 4590n },
     { taxable: 3255n, totalTax: 586n, cgst: 293n, sgst: 293n },
@@ -142,8 +191,8 @@ describe('T7 · splitTax — cgst + sgst === totalTax in Every Case', () => {
     { taxable: 13000n, totalTax: 2340n, cgst: 1170n, sgst: 1170n },
   ];
 
-  for (const c of intraCases) {
-    it(`splits tax for ₹${c.taxable} taxable (CGST ₹${c.cgst}, SGST ₹${c.sgst}, Total ₹${c.totalTax})`, () => {
+  for (const c of verifiedIntraCases) {
+    it(`preserves verified split for ₹${c.taxable} taxable (CGST ₹${c.cgst}, SGST ₹${c.sgst})`, () => {
       const split = splitTax({
         supplyType: 'INTRA',
         taxable: paise(c.taxable * 100n),
@@ -156,8 +205,72 @@ describe('T7 · splitTax — cgst + sgst === totalTax in Every Case', () => {
       expect(split.sgst).toBe(paise(c.sgst * 100n));
       expect(split.igst).toBe(paise(0n));
       expect(split.cgst + split.sgst).toBe(paise(c.totalTax * 100n));
+      expect(split.flags).toEqual([]);
     });
   }
+
+  // Corrected edge cases (Defect 1)
+  it('correctly handles Typo (₹100 entered for ₹48,870 on ₹2,71,503 taxable) -> ₹50 / ₹50 with SPLIT_FROM_ENTERED', () => {
+    const split = splitTax({
+      supplyType: 'INTRA',
+      taxable: paise(27150300n),
+      totalTax: paise(10000n), // ₹100 entered tax
+      rateBps: 1800n,
+      rule: 'HALF_DOWN',
+    });
+
+    expect(split.cgst).toBe(paise(5000n));
+    expect(split.sgst).toBe(paise(5000n));
+    expect(split.flags).toContain('SPLIT_FROM_ENTERED');
+    expect(split.cgst + split.sgst).toBe(paise(10000n));
+    expect(split.sgst >= 0n).toBe(true);
+  });
+
+  it('correctly handles Swarn mixed-rate (₹4,176 taxable, ₹677 tax) -> ₹338 / ₹339 with SPLIT_FROM_ENTERED', () => {
+    const split = splitTax({
+      supplyType: 'INTRA',
+      taxable: paise(417600n),
+      totalTax: paise(67700n),
+      rateBps: 1800n,
+      rule: 'HALF_DOWN',
+    });
+
+    expect(split.cgst).toBe(paise(33800n));
+    expect(split.sgst).toBe(paise(33900n));
+    expect(split.flags).toContain('SPLIT_FROM_ENTERED');
+    expect(split.cgst + split.sgst).toBe(paise(67700n));
+    expect(split.sgst >= 0n).toBe(true);
+  });
+
+  it('correctly handles Nil rate with tax entered (₹5,000 taxable, ₹1,000 tax) -> ₹500 / ₹500 with SPLIT_FROM_ENTERED', () => {
+    const split = splitTax({
+      supplyType: 'INTRA',
+      taxable: paise(500000n),
+      totalTax: paise(100000n),
+      rateBps: 0n,
+      rule: 'HALF_DOWN',
+    });
+
+    expect(split.cgst).toBe(paise(50000n));
+    expect(split.sgst).toBe(paise(50000n));
+    expect(split.flags).toContain('SPLIT_FROM_ENTERED');
+    expect(split.cgst + split.sgst).toBe(paise(100000n));
+  });
+
+  it('correctly handles Odd entered tax (₹3,261 taxable, ₹587 tax) -> ₹293 / ₹294 without flags', () => {
+    const split = splitTax({
+      supplyType: 'INTRA',
+      taxable: paise(326100n),
+      totalTax: paise(58700n),
+      rateBps: 1800n,
+      rule: 'HALF_DOWN',
+    });
+
+    expect(split.cgst).toBe(paise(29300n));
+    expect(split.sgst).toBe(paise(29400n));
+    expect(split.flags).toEqual([]);
+    expect(split.cgst + split.sgst).toBe(paise(58700n));
+  });
 
   it('handles INTER supply correctly (Shivam Enterprises ₹2,71,503 taxable, ₹48,870 tax)', () => {
     const split = splitTax({
@@ -173,25 +286,12 @@ describe('T7 · splitTax — cgst + sgst === totalTax in Every Case', () => {
     expect(split.sgst).toBe(paise(0n));
     expect(split.flags).toEqual([]);
   });
-
-  it('flags SPLIT_ASYMMETRY when |cgst - sgst| > ₹1', () => {
-    const split = splitTax({
-      supplyType: 'INTRA',
-      taxable: paise(1000000n), // 10000 rupees
-      totalTax: paise(300000n), // 3000 rupees entered tax (different from expected 1800)
-      rateBps: 1800n,
-      rule: 'HALF_DOWN',
-    });
-    // cgst = 9% of 10000 = 900 rupees (90000 paise). sgst = 3000 - 900 = 2100 rupees (210000 paise). diff = 1200 rupees > 1 rupee.
-    expect(split.flags).toContain('SPLIT_ASYMMETRY');
-  });
 });
 
 describe('T14 · Scale Test (BigInt Precision)', () => {
   it('handles ₹9,99,99,99,999.99 without overflow or precision loss', () => {
     const hugeTaxable = paise(999999999999n); // ₹9,99,99,99,999.99
     const tax = expectedTaxPaise(hugeTaxable, 1800n, 'HALF_DOWN');
-    // 18% of 9999999999.99 = 1799999999.9982 -> rounds to 1800000000.00 = 180000000000n paise
     expect(tax).toBe(paise(180000000000n));
     expect(typeof tax).toBe('bigint');
   });

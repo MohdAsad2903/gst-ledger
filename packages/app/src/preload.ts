@@ -1,36 +1,34 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type {
-  ApiClient,
-  CalcDemoInput,
-  CalcDemoResult,
-  SystemHealth,
-  AppSettingsSnapshot,
-  StateRow,
-  TaxRateProfileRow,
-  BackupRecordDTO,
-  VerifyReportDTO,
-} from './ipc/contract.js';
-import type { Result } from '@gst/core';
+import type { ApiClient, CalcDemoInput, IpcContract } from './ipc/contract.js';
+
+/**
+ * Type-safe IPC invocation helper linked directly to IpcContract.
+ * Wrong channel names or argument type mismatches cause compile-time errors.
+ */
+function invoke<K extends keyof IpcContract>(
+  channel: K,
+  ...args: Parameters<IpcContract[K]>
+): ReturnType<IpcContract[K]> {
+  return ipcRenderer.invoke(channel, ...args) as ReturnType<IpcContract[K]>;
+}
 
 const api: ApiClient = {
   system: {
-    getHealth: (): Promise<SystemHealth> => ipcRenderer.invoke('system:getHealth'),
-    getSettings: (): Promise<AppSettingsSnapshot> => ipcRenderer.invoke('system:getSettings'),
-    setSetting: (key: string, value: unknown): Promise<Result<void, string>> =>
-      ipcRenderer.invoke('system:setSetting', key, value),
+    getHealth: () => invoke('system:getHealth'),
+    getSettings: () => invoke('system:getSettings'),
+    setSetting: (key: string, value: unknown) => invoke('system:setSetting', key, value),
   },
   backup: {
-    list: (): Promise<BackupRecordDTO[]> => ipcRenderer.invoke('backup:list'),
-    create: (): Promise<Result<BackupRecordDTO, string>> => ipcRenderer.invoke('backup:create'),
-    verify: (id: string): Promise<Result<VerifyReportDTO, string>> =>
-      ipcRenderer.invoke('backup:verify', id),
+    list: () => invoke('backup:list'),
+    create: () => invoke('backup:create'),
+    verify: (id: string) => invoke('backup:verify', id),
   },
   masters: {
-    getStates: (): Promise<StateRow[]> => ipcRenderer.invoke('masters:getStates'),
-    getRates: (): Promise<TaxRateProfileRow[]> => ipcRenderer.invoke('masters:getRates'),
+    getStates: () => invoke('masters:getStates'),
+    getRates: () => invoke('masters:getRates'),
   },
   calc: {
-    demo: (input: CalcDemoInput): Promise<CalcDemoResult> => ipcRenderer.invoke('calc:demo', input),
+    demo: (input: CalcDemoInput) => invoke('calc:demo', input),
   },
 };
 

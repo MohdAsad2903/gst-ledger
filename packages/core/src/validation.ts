@@ -1,4 +1,26 @@
-import type { Paise, ValidationIssue } from './types.js';
+import type { MoneyError, Paise, ValidationIssue } from './types.js';
+
+/**
+ * Maps an AmountError/MoneyError code to a clear, plain-language error message.
+ *
+ * @param error AmountError code
+ * @param field Field name ('total' or 'tax')
+ * @returns Plain-language message
+ */
+export function messageForAmountError(error: MoneyError, field: 'total' | 'tax'): string {
+  switch (error) {
+    case 'EMPTY':
+      return field === 'total' ? 'Enter the total amount.' : 'Enter the GST amount.';
+    case 'NOT_A_NUMBER':
+      return 'Enter an amount using numbers only.';
+    case 'MALFORMED':
+      return 'That amount is not in a recognised format.';
+    case 'TOO_MANY_DECIMALS':
+      return 'Enter at most two decimal places.';
+    case 'NEGATIVE_NOT_ALLOWED':
+      return 'Amounts cannot be negative. Use a credit note instead.';
+  }
+}
 
 /**
  * 1 Crore in Paise = ₹1,00,00,000 * 100 paise = 1,000,000,000 paise.
