@@ -1,2 +1,4 @@
 * text=auto
 *.sql text eol=lf
+packages/data/fixtures/july-2026-fixture.csv text eol=crlf
+
