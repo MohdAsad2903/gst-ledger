@@ -26,28 +26,29 @@ describe('Migration Runner', () => {
     }
   });
 
-  it('applies all 6 migrations on fresh database and is completely idempotent on second run', async () => {
+  it('applies all 7 migrations on fresh database and is completely idempotent on second run', async () => {
     const db = openDatabase(tempDbPath);
     try {
-      // First run: apply all migrations (0001, 0002, 0003, 0004, 0005, 0006)
+      // First run: apply all migrations (0001, 0002, 0003, 0004, 0005, 0006, 0007)
       const res1 = await runMigrations(db);
-      expect(res1.appliedCount).toBe(6);
-      expect(res1.currentVersion).toBe(6);
-      expect(getCurrentSchemaVersion(db)).toBe(6);
+      expect(res1.appliedCount).toBe(7);
+      expect(res1.currentVersion).toBe(7);
+      expect(getCurrentSchemaVersion(db)).toBe(7);
 
       const applied = getAppliedMigrations(db);
-      expect(applied.length).toBe(6);
+      expect(applied.length).toBe(7);
       expect(applied[0]?.name).toBe('foundation');
       expect(applied[1]?.name).toBe('seed_foundation');
       expect(applied[2]?.name).toBe('update_states');
       expect(applied[3]?.name).toBe('prompt2_schema');
       expect(applied[4]?.name).toBe('seed_org_units_and_suppliers');
       expect(applied[5]?.name).toBe('remove_seeded_parties');
+      expect(applied[6]?.name).toBe('seed_parties_verified');
 
       // Second run: no-op
       const res2 = await runMigrations(db);
       expect(res2.appliedCount).toBe(0);
-      expect(res2.currentVersion).toBe(6);
+      expect(res2.currentVersion).toBe(7);
       expect(res2.appliedMigrations.length).toBe(0);
     } finally {
       db.close();
@@ -68,7 +69,7 @@ describe('Migration Runner', () => {
       });
 
       expect(hookCalled).toBe(true);
-      expect(pendingCount).toBe(6);
+      expect(pendingCount).toBe(7);
     } finally {
       db.close();
     }

@@ -36,17 +36,6 @@ describe('Prompt 2A · Data Model, Duplicate Detection & July 2026 Fixture Verif
     orgUnitsRepo = new OrgUnitsRepository(db);
     periodsRepo = new PeriodsRepository(db);
     settingsRepo = new SettingsRepository(db);
-
-    // Create test supplier for unit test cases
-    partiesRepo.create({
-      displayName: 'Durga Metals',
-      gstin: '09FBQPS0051B1ZN',
-      stateCode: '09',
-      city: 'Ghaziabad',
-      isSupplier: true,
-      isCustomer: false,
-      gstinVerified: true,
-    });
   });
 
   afterEach(() => {
@@ -113,7 +102,7 @@ describe('Prompt 2A · Data Model, Duplicate Detection & July 2026 Fixture Verif
     const shivamBill = allBills.find(b => b.partyId === shivam.id)!;
     expect(shivamBill.taxVariancePaise).toBe(-100n); // -₹1
 
-    const anand4573 = allBills.find(b => b.billNumber === '4573')!;
+    const anand4573 = allBills.find(b => b.billNumber === '26-27/4573')!;
     expect(anand4573.taxVariancePaise).toBe(-100n); // -₹1
 
     const swarnBill = allBills.find(b => b.partyId === partiesRepo.getByNormName('SWARNENTERPRISES')!.id)!;
@@ -171,14 +160,29 @@ describe('Prompt 2A · Data Model, Duplicate Detection & July 2026 Fixture Verif
       expect(dbParties.some(p => p.displayName === banned)).toBe(false);
     }
 
-    // 2. All 6 real suppliers previously missing are present
+    // 2. All 21 verified suppliers are present with exact names
     const realSuppliers = [
-      'Jain Tool Center',
-      'Omnipresent Engineers',
+      '4S Solutions',
+      'Anand Machinery Store',
+      'Chand Company',
+      'Durga Metals',
       'India Steel',
-      'Rawal Machinery Store',
+      'Jain Tool Center',
+      'Jyoti Steel',
+      'Kedarnath and Company',
+      'Metal Max Industries',
+      'Nav Bharat Electricals',
+      'Omnipresent Engineers',
+      'Prakash Machinery Store',
       'R.H. Engineering Works',
+      'Rawal Machinery Store',
       'S.S.K. Engineering Works',
+      'Sapna Steels and Alloys Pvt Ltd',
+      'Shivam Enterprises',
+      'Swarn Enterprises',
+      'Taneja Traders',
+      'Vanshika Steels (India)',
+      'Vardhman Industrial Gases',
     ];
     for (const name of realSuppliers) {
       expect(dbParties.some(p => p.displayName === name)).toBe(true);
@@ -209,6 +213,14 @@ describe('Prompt 2A · Data Model, Duplicate Detection & July 2026 Fixture Verif
     // 5. Exactly 17 parties carry gstin_verified = 1
     const verifiedParties = dbParties.filter(p => p.gstinVerified);
     expect(verifiedParties.length).toBe(17);
+
+    // 6. Anti-fabrication guard: No GSTIN matches synthetic sequences ^09AAEC or ^09AAAF followed by 1234|3456|5678|7890|9012
+    const syntheticPattern = /^09(?:AAEC|AAAF)(?:1234|3456|5678|7890|9012)/;
+    for (const p of dbParties) {
+      if (p.gstin) {
+        expect(syntheticPattern.test(p.gstin)).toBe(false);
+      }
+    }
   });
 
   it('Party Provenance: provenance validator fails when a fabricated supplier row is inserted into database', () => {

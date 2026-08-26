@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
@@ -15,6 +16,9 @@ import { paise } from '../packages/core/src/index.js';
 import {
   JULY_2026_OPENING_CREDIT_PAISE,
 } from '../packages/data/src/fixtures/july-2026.js';
+
+export const EXPECTED_FIXTURE_SHA256 = '59e82c6e099d3c8153fec168df91afcce94ffc9995bc3ba24363bd20bfed77f9';
+export const EXPECTED_MIGRATION_0007_SHA256 = 'a6b22f9027eae22a164187c0d5ad8bf4b71762fc7d287ee971c3ec04bf282189';
 
 export interface FixtureLoadSummary {
   purchaseBillsLoaded: number;
@@ -46,40 +50,117 @@ export interface CsvFixtureRow {
   notes?: string;
 }
 
-export function parseFixtureCsv(csvPath?: string): CsvFixtureRow[] {
+function parseCsvLine(line: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      result.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+export function parseFixtureCsv(csvPath?: string, verifyChecksum = false): CsvFixtureRow[] {
   const filePath = csvPath ?? path.resolve(process.cwd(), 'packages/data/fixtures/july-2026-fixture.csv');
-  const content = fs.readFileSync(filePath, 'utf-8');
+  const buffer = fs.readFileSync(filePath);
+
+  if (verifyChecksum) {
+    const actualSha = crypto.createHash('sha256').update(buffer).digest('hex');
+    if (actualSha !== EXPECTED_FIXTURE_SHA256) {
+      throw new Error(
+        `Fixture file has been modified. Expected SHA-256 ${EXPECTED_FIXTURE_SHA256}, found ${actualSha}.\nThis file is a verified transcription of the company's register and must not be edited.`
+      );
+    }
+  }
+
+  const content = buffer.toString('utf-8');
   const lines = content.trim().split(/\r?\n/);
   const rows: CsvFixtureRow[] = [];
+  if (lines.length === 0) return rows;
 
-  // Skip header line
+  const header = parseCsvLine(lines[0]!).map(c => c.trim().toLowerCase());
+  const hasNamedHeaders = header.includes('party_name') || header.includes('taxable_rupees');
+
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i]!.trim();
     if (!line) continue;
-    const parts = line.split(',');
-    rows.push({
-      direction: parts[0] as 'PURCHASE' | 'SALE',
-      periodYear: parseInt(parts[1]!, 10),
-      periodMonth: parseInt(parts[2]!, 10),
-      branchShortName: parts[3] || undefined,
-      partyDisplayName: parts[4] || undefined,
-      partyGstin: parts[5] || undefined,
-      partyStateCode: parts[6] || undefined,
-      partyCity: parts[7] || undefined,
-      billNumber: parts[8]!,
-      billDate: parts[9]!,
-      totalAmountRupees: parseInt(parts[10]!, 10),
-      taxAmountRupees: parseInt(parts[11]!, 10),
-      rateBps: parts[12] ? parseInt(parts[12]!, 10) : undefined,
-      isCancelled: parts[13] === '1',
-      notes: parts.slice(14).join(',') || undefined,
-    });
+    const parts = parseCsvLine(line);
+
+    if (hasNamedHeaders) {
+      const rowMap: Record<string, string> = {};
+      header.forEach((col, idx) => {
+        rowMap[col] = parts[idx]?.trim() ?? '';
+      });
+
+      const direction = (rowMap['direction'] ?? 'PURCHASE') as 'PURCHASE' | 'SALE';
+      const taxableRupees = rowMap['taxable_rupees'] ? parseInt(rowMap['taxable_rupees'], 10) : 0;
+      const taxRupees = rowMap['tax_rupees'] ? parseInt(rowMap['tax_rupees'], 10) : 0;
+      const totalRupees = rowMap['total_rupees']
+        ? parseInt(rowMap['total_rupees'], 10)
+        : taxableRupees + taxRupees;
+      const isCancelled = rowMap['status'] === 'CANCELLED';
+
+      rows.push({
+        direction,
+        periodYear: 2026,
+        periodMonth: 7,
+        branchShortName: rowMap['org_unit'] || undefined,
+        partyDisplayName: rowMap['party_name'] || undefined,
+        partyGstin: rowMap['party_gstin'] || undefined,
+        partyStateCode: rowMap['party_state_code'] || undefined,
+        partyCity: rowMap['party_address'] || undefined,
+        billNumber: rowMap['bill_number']!,
+        billDate: rowMap['bill_date']!,
+        totalAmountRupees: totalRupees,
+        taxAmountRupees: taxRupees,
+        rateBps: 1800,
+        isCancelled,
+        notes: rowMap['notes'] || undefined,
+      });
+    } else {
+      rows.push({
+        direction: parts[0] as 'PURCHASE' | 'SALE',
+        periodYear: parseInt(parts[1]!, 10),
+        periodMonth: parseInt(parts[2]!, 10),
+        branchShortName: parts[3] || undefined,
+        partyDisplayName: parts[4] || undefined,
+        partyGstin: parts[5] || undefined,
+        partyStateCode: parts[6] || undefined,
+        partyCity: parts[7] || undefined,
+        billNumber: parts[8]!,
+        billDate: parts[9]!,
+        totalAmountRupees: parseInt(parts[10]!, 10),
+        taxAmountRupees: parseInt(parts[11]!, 10),
+        rateBps: parts[12] ? parseInt(parts[12]!, 10) : undefined,
+        isCancelled: parts[13] === '1',
+        notes: parts.slice(14).join(',') || undefined,
+      });
+    }
   }
 
   return rows;
 }
 
-export function loadJuly2026Fixture(dbOrPath: Database.Database | string, csvPath?: string): FixtureLoadSummary {
+export function loadJuly2026Fixture(
+  dbOrPath: Database.Database | string,
+  csvPath?: string,
+  verifyChecksum = false,
+): FixtureLoadSummary {
   const isCustomDb = typeof dbOrPath !== 'string';
   const db = isCustomDb ? dbOrPath : openDatabase(dbOrPath);
   if (!isCustomDb) {
@@ -115,7 +196,7 @@ export function loadJuly2026Fixture(dbOrPath: Database.Database | string, csvPat
     );
 
     // 3. Load rows from CSV
-    const rows = parseFixtureCsv(csvPath);
+    const rows = parseFixtureCsv(csvPath, verifyChecksum);
 
     // 4. Ensure branches
     const orgUnits = orgUnitsRepo.list();
@@ -194,7 +275,8 @@ export function loadJuly2026Fixture(dbOrPath: Database.Database | string, csvPat
           duplicateErrorsCount++;
         }
       } else if (row.direction === 'SALE') {
-        const branch = row.branchShortName === 'Lucknow' ? lkoBranch : gzbBranch;
+        const isLko = row.branchShortName?.toLowerCase().includes('lucknow');
+        const branch = isLko ? lkoBranch : gzbBranch;
         if (!branch) {
           throw new Error(`Branch not found for: ${row.branchShortName}`);
         }
