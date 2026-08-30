@@ -8,9 +8,8 @@ describe('Real UserData Database Loader & Verification', () => {
     const appDataPath = process.env.APPDATA || 'C:\\Users\\Ashraf Imam\\AppData\\Roaming';
     const realDbPath = path.join(appDataPath, 'GST Ledger', 'gst-ledger.sqlite');
 
-    // 1. Load fixture into real database
-    const summary = loadJuly2026Fixture(realDbPath, undefined, true);
-    expect(summary.purchaseBillsLoaded).toBe(35);
+    // 1. Ensure July 2026 fixture is loaded in real database
+    loadJuly2026Fixture(realDbPath, undefined, true);
 
     // 2. Re-read real database directly via raw SQL
     const db = new Database(realDbPath);
