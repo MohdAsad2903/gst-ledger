@@ -33,6 +33,10 @@ screenshot_*
 *.db-wal
 *.db-shm
 
+# Business data fixtures
+packages/data/fixtures/
+*.csv
+
 # Environment & logs
 .env
 .env.local

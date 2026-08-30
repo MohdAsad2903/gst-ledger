@@ -74,14 +74,26 @@ cd gst-ledger
 
 # Install dependencies
 npm install
+```
 
+### Business Data Fixtures
+
+To protect internal GST records and company tax identities, register CSV files are excluded from git tracking (`packages/data/fixtures/` in `.gitignore`).
+
+For local development or testing with the July 2026 fixture:
+1. Place the externally supplied `july-2026-fixture.csv` into `packages/data/fixtures/july-2026-fixture.csv`.
+2. The fixture loader verifies cryptographic SHA-256 (`59e82c6e099d3c8153fec168df91afcce94ffc9995bc3ba24363bd20bfed77f9`) to ensure file integrity prior to loading.
+
+### Verification & Testing
+
+```bash
 # Run TypeScript type check across monorepo
 npm run typecheck
 
 # Run architecture layering and code quality linters
 npm run lint
 
-# Run all 202 unit and property-based test suites
+# Run all unit and property-based test suites
 npm test
 
 # Build production desktop binaries
